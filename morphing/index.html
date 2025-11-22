@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCI Morph Configurator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f2f5; }
+        .json-output { font-family: 'Consolas', 'Monaco', monospace; font-size: 0.9rem; }
+    </style>
+</head>
+<body class="text-gray-800 p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        <!-- Left Column: Controls -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <h1 class="text-2xl font-bold mb-2 text-indigo-700">SCI Morph Configurator</h1>
+            <p class="text-sm text-gray-500 mb-6">Configuratore logico per deformazione mesh 3D</p>
+
+            <form id="morphForm" class="space-y-5">
+                
+                <!-- 1. Livello Lesione -->
+                <div>
+                    <label class="block text-sm font-semibold mb-1">Livello Lesione (Injury Level)</label>
+                    <select id="injuryLevel" class="w-full p-2 border rounded bg-gray-50 focus:ring-2 focus:ring-indigo-500">
+                        <option value="cervical">Cervicale (C4-C7) - Tetraplegia</option>
+                        <option value="thoracic_high">Toracica Alta (T1-T6) - Paraplegia, no tronco</option>
+                        <option value="thoracic_low">Toracica Bassa (T7-T12) - Paraplegia, tronco parziale</option>
+                        <option value="lumbar">Lombare (L1-L5) - Paraplegia, tronco intatto</option>
+                    </select>
+                </div>
+
+                <!-- 2. Tempo -->
+                <div>
+                    <label class="block text-sm font-semibold mb-1">Tempo dal trauma (Duration)</label>
+                    <select id="duration" class="w-full p-2 border rounded bg-gray-50 focus:ring-2 focus:ring-indigo-500">
+                        <option value="acute">Acuto (< 6 mesi) - Edema</option>
+                        <option value="subacute">Sub-acuto (6-18 mesi) - Atrofia rapida</option>
+                        <option value="chronic" selected>Cronico (> 3 anni) - Stabilizzazione</option>
+                    </select>
+                </div>
+
+                <!-- 3. Attività -->
+                <div>
+                    <label class="block text-sm font-semibold mb-1">Attività (Activity)</label>
+                    <select id="activity" class="w-full p-2 border rounded bg-gray-50 focus:ring-2 focus:ring-indigo-500">
+                        <option value="sedentary">Sedentario</option>
+                        <option value="active">Attivo (Sport/FES)</option>
+                    </select>
+                </div>
+
+                <!-- 4. Sesso -->
+                <div>
+                    <label class="block text-sm font-semibold mb-1">Sesso Biologico</label>
+                    <div class="flex gap-4">
+                        <label class="flex items-center"><input type="radio" name="sex" value="M" checked class="mr-2"> Maschio</label>
+                        <label class="flex items-center"><input type="radio" name="sex" value="F" class="mr-2"> Femmina</label>
+                    </div>
+                </div>
+
+                <!-- 5. Età -->
+                <div>
+                    <label class="block text-sm font-semibold mb-1">Fascia d'Età</label>
+                    <select id="ageGroup" class="w-full p-2 border rounded bg-gray-50 focus:ring-2 focus:ring-indigo-500">
+                        <option value="young">Giovane (18-30)</option>
+                        <option value="adult" selected>Adulto (30-50)</option>
+                        <option value="senior">Senior (50+)</option>
+                    </select>
+                </div>
+
+            </form>
+
+            <div class="mt-8 p-4 bg-indigo-50 rounded-lg border border-indigo-100">
+                <h3 class="font-semibold text-indigo-800 text-sm">Logica Attiva:</h3>
+                <ul class="text-xs text-indigo-600 mt-2 space-y-1" id="logicSummary">
+                    <!-- Filled by JS -->
+                </ul>
+            </div>
+        </div>
+
+        <!-- Right Column: JSON Output -->
+        <div class="bg-gray-900 text-green-400 p-6 rounded-xl shadow-lg overflow-auto h-[600px] relative">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                <h2 class="font-mono font-bold">Generated JSON Output</h2>
+                <button onclick="copyToClipboard()" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-white transition">Copia JSON</button>
+            </div>
+            <pre id="jsonOutput" class="json-output whitespace-pre-wrap"></pre>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURAZIONE BASE & COSTANTI ---
+        const ELEMENTS = {
+            level: document.getElementById('injuryLevel'),
+            duration: document.getElementById('duration'),
+            activity: document.getElementById('activity'),
+            sex: document.getElementsByName('sex'),
+            age: document.getElementById('ageGroup'),
+            output: document.getElementById('jsonOutput'),
+            summary: document.getElementById('logicSummary')
+        };
+
+        // --- MOTORE LOGICO ---
+        function calculateMorph() {
+            // 1. Raccogli Input
+            const inputs = {
+                level: ELEMENTS.level.value,
+                duration: ELEMENTS.duration.value,
+                activity: ELEMENTS.activity.value,
+                sex: document.querySelector('input[name="sex"]:checked').value,
+                age: ELEMENTS.age.value
+            };
+
+            // 2. Inizializza Valori Base
+            let data = {
+                meta: {
+                    summary: generateSummary(inputs),
+                    timestamp: new Date().toISOString()
+                },
+                morph_zones: {
+                    neck_shoulders: {},
+                    torso_abdomen: {},
+                    pelvis_glutes: {},
+                    legs_knees: {}
+                },
+                skin_material: {}
+            };
+
+            // --- LOGICA A: LA LINEA DI DEMARCAZIONE (HORIZON) ---
+            // Determina tono muscolare basato sul livello (Spastico vs Flaccido)
+            // C4-T12 = Spastico (Medium tone), L1-L5 = Flaccido (Low tone)
+            const isFlaccid = inputs.level === 'lumbar';
+            const isHighLesion = inputs.level === 'cervical';
+            
+            // Fattore Tempo (Duration)
+            let atrophyFactor = 0; 
+            let edemaFactor = 0;
+            let bonyFactor = 0;
+
+            switch(inputs.duration) {
+                case 'acute':
+                    atrophyFactor = 0.1; // Poca atrofia
+                    edemaFactor = 0.9;   // Molto gonfiore
+                    bonyFactor = 0.1;
+                    break;
+                case 'subacute':
+                    atrophyFactor = 0.6; // Atrofia rapida
+                    edemaFactor = 0.3;
+                    bonyFactor = 0.5;
+                    break;
+                case 'chronic':
+                    atrophyFactor = 0.9; // Massima atrofia
+                    edemaFactor = 0.4;   // Edema venoso cronico (caviglie)
+                    bonyFactor = 0.9;
+                    break;
+            }
+
+            // Se attivo, riduci atrofia del 30%
+            if (inputs.activity === 'active') {
+                atrophyFactor *= 0.7;
+            }
+
+            // --- LOGICA B: SEX DIMORPHISM ---
+            const isMale = inputs.sex === 'M';
+            
+            // --- LOGICA C: AGE & ELASTICITY ---
+            let skinElasticity = 1.0;
+            let skinRoughness = 0.3;
+            
+            if (inputs.age === 'adult') { skinElasticity = 0.7; skinRoughness = 0.5; }
+            if (inputs.age === 'senior') { skinElasticity = 0.3; skinRoughness = 0.8; }
+            
+            // Effetto "Sacchetto vuoto" per senior cronici
+            const saggingEffect = (inputs.duration === 'chronic' && inputs.age === 'senior') ? 0.9 : 0.2;
+
+            // ==========================================
+            // CALCOLO ZONE SPECIFICHE
+            // ==========================================
+
+            // 1. NECK & SHOULDERS
+            // Se Para (T/L) e Cronico = Ipertrofia (uso carrozzina)
+            // Se Tetra (C) = Atrofia o Normale
+            let shoulderHypertrophy = 1.0;
+            let posture = "neutral";
+
+            if (!isHighLesion && inputs.duration !== 'acute') {
+                // Paraplegico che usa le braccia
+                shoulderHypertrophy = inputs.activity === 'active' ? 1.4 : 1.2;
+            } else if (isHighLesion) {
+                // Tetraplegico
+                shoulderHypertrophy = 0.9; // Leggera atrofia
+                posture = "slumped_forward"; // Crollo posturale
+            }
+            
+            data.morph_zones.neck_shoulders = {
+                hypertrophy: fix(shoulderHypertrophy),
+                posture: posture
+            };
+
+            // 2. TORSO & ABDOMEN
+            // La "pancia da tetra/para": T1-T6 massima, T7-T12 media, L1-L5 nulla
+            let bellyDistension = 0.0;
+            let muscleDef = 1.0 - atrophyFactor;
+
+            if (inputs.level === 'cervical' || inputs.level === 'thoracic_high') {
+                bellyDistension = 0.9;
+            } else if (inputs.level === 'thoracic_low') {
+                bellyDistension = 0.5;
+            } else {
+                bellyDistension = 0.1; // Lombare ha addominali
+            }
+
+            // Maschi accumulano più grasso viscerale (pancia dura)
+            if (isMale && inputs.activity === 'sedentary') bellyDistension *= 1.2;
+            
+            data.morph_zones.torso_abdomen = {
+                muscle_definition: fix(Math.max(0, muscleDef)),
+                distension_lower: fix(Math.min(1, bellyDistension)),
+                skin_folds: fix(1.0 - skinElasticity) // Più pieghe se poca elasticità
+            };
+
+            // 3. PELVIS & GLUTES
+            // Appiattimento da seduta (pressure sore risk shape)
+            let flattening = (inputs.duration === 'acute') ? 0.2 : 0.9; // Cronico = piatto
+            let widthSpread = (1.0 - skinElasticity) * 0.8; // "Spanciamento" laterale seduto
+
+            data.morph_zones.pelvis_glutes = {
+                flattening: fix(flattening),
+                width_spread: fix(widthSpread),
+                sacral_bony_prominence: fix(bonyFactor * (isMale ? 1.0 : 0.7)) // Donne hanno più sub-q fat che copre
+            };
+
+            // 4. LEGS & KNEES
+            // Spasticità mantiene volume finto, Flaccidità = stecchino
+            let legVol = 1.0;
+            
+            if (isFlaccid) {
+                // L1-L5: Atrofia severa reale
+                legVol = 1.0 - (atrophyFactor * 0.9); 
+            } else {
+                // Spastico: Atrofia mascherata da tono
+                legVol = 1.0 - (atrophyFactor * 0.6); 
+            }
+
+            // Donne: grasso sottocutaneo maschera atrofia
+            if (!isMale) legVol += 0.15;
+
+            data.morph_zones.legs_knees = {
+                muscle_volume: fix(Math.max(0.1, legVol)),
+                bony_prominence: fix(bonyFactor),
+                edema_ankles: fix(edemaFactor),
+                tone_type: isFlaccid ? "flaccid" : "spastic"
+            };
+
+            // 5. SKIN MATERIAL
+            data.skin_material = {
+                roughness: fix(skinRoughness),
+                vascularity_legs: (inputs.duration === 'acute') ? 0.8 : 0.2, // Acuto = infiammato, Cronico = pallido/cianotico
+                cellulite_visible: (!isMale && atrophyFactor > 0.5) ? 0.8 : 0.1 // Donne post-atrofia
+            };
+
+            // Output
+            ELEMENTS.output.textContent = JSON.stringify(data, null, 2);
+            updateSummaryUI(isFlaccid, isMale, inputs.age, inputs.level);
+        }
+
+        // --- UTILITIES ---
+        function fix(num) {
+            return parseFloat(num.toFixed(2));
+        }
+
+        function generateSummary(i) {
+            return `Sesso: ${i.sex}, Età: ${i.age}, Livello: ${i.level}, Tempo: ${i.duration}`;
+        }
+
+        function updateSummaryUI(isFlaccid, isMale, age, level) {
+            const toneText = isFlaccid ? "FLACCIDO (Lombare - Perdita volume severa)" : "SPASTICO (Alto - Tono residuo)";
+            const fatText = isMale ? "Viscerale (Addome)" : "Sottocutaneo (Fianchi/Cosce)";
+            let horizonText = "";
+            
+            if(level === 'cervical') horizonText = "Tutto il corpo";
+            else if(level.includes('thoracic')) horizonText = "Tronco parziale + Gambe";
+            else horizonText = "Solo Gambe";
+
+            ELEMENTS.summary.innerHTML = `
+                <li><strong>Orizzonte Lesione:</strong> ${horizonText} colpito</li>
+                <li><strong>Tono Muscolare:</strong> ${toneText}</li>
+                <li><strong>Pattern Adiposo:</strong> ${fatText}</li>
+                <li><strong>Fattore Età:</strong> ${age.toUpperCase()} (Elasticità ridotta)</li>
+            `;
+        }
+
+        function copyToClipboard() {
+            const text = document.getElementById('jsonOutput').innerText;
+            
+            // Metodo fallback per ambienti sandbox/iframe
+            // Creiamo un elemento textarea temporaneo
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // Assicuriamoci che non sia visibile
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if(successful) {
+                    alert("JSON copiato negli appunti!");
+                } else {
+                    alert("Errore durante la copia.");
+                }
+            } catch (err) {
+                console.error('Fallback copy failed', err);
+                alert("Impossibile copiare automaticamente. Seleziona il testo manualmente.");
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        // Listeners
+        document.getElementById('morphForm').addEventListener('change', calculateMorph);
+
+        // Init
+        calculateMorph();
+
+    </script>
+</body>
+</html>
